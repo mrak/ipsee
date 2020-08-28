@@ -2,22 +2,27 @@ extern crate pnet;
 extern crate clap;
 
 use std::env;
-use std::process::exit;
+// use std::process::exit;
 use std::net::IpAddr;
+use std::sync::mpsc::{Sender,Receiver};
+use std::sync::mpsc;
+use std::thread;
+// use std::io::{Result};
+use std::vec::Vec;
 
 use pnet::datalink::{self, NetworkInterface};
 use pnet::datalink::Channel::Ethernet;
 use pnet::packet::Packet;
 use pnet::packet::arp::ArpPacket;
-use pnet::packet::ethernet::{EtherTypes, EthernetPacket, MutableEthernetPacket};
-use pnet::packet::icmpv6::Icmpv6Packet;
-use pnet::packet::icmp::{echo_reply, echo_request, IcmpPacket, IcmpTypes};
+use pnet::packet::ethernet::{EtherTypes, EthernetPacket};
+// use pnet::packet::icmpv6::Icmpv6Packet;
+use pnet::packet::icmp::{IcmpPacket, IcmpTypes};
 use pnet::packet::ip::{IpNextHeaderProtocol, IpNextHeaderProtocols};
 use pnet::packet::ipv4::Ipv4Packet;
 use pnet::packet::ipv6::Ipv6Packet;
 use pnet::packet::tcp::TcpPacket;
 use pnet::packet::udp::UdpPacket;
-use pnet::util::MacAddr;
+// use pnet::util::MacAddr;
 
 use clap::{App,Arg,ArgMatches};
 
@@ -27,34 +32,42 @@ fn main() {
     let interface_name_matcher =
         |interface: &NetworkInterface| interface.name == interface_name;
 
-    let interfaces = datalink::interfaces();
-    let interface = match interfaces.into_iter().find(interface_name_matcher) {
-        Some(i) => i,
-        None => {
-            eprint!("No such interface with name \"{}\".", interface_name);
-            exit(1);
-        }
-    };
+    let all_interfaces = datalink::interfaces();
+    let interfaces = all_interfaces.into_iter().filter(interface_name_matcher);
 
-    let (_, mut rx) = match datalink::channel(&interface, Default::default()) {
-        Ok(Ethernet(tx, rx)) => (tx, rx),
-        Ok(_) => panic!("ipsee: unhandled channel type: {}"),
-        Err(e) => panic!("ipsee: unable to create channel: {}", e),
-    };
+    let (snd,rcv): (Sender<Vec<u8>>, Receiver<Vec<u8>>) = mpsc::channel();
+    let mut children = Vec::new();
+
+    for interface in interfaces {
+        let child_snd = snd.clone();
+        let child = thread::spawn(move || {
+            let (_, mut rx) = match datalink::channel(&interface, Default::default()) {
+                Ok(Ethernet(tx, rx)) => (tx, rx),
+                Ok(_) => panic!("ipsee: unhandled channel type: {}"),
+                Err(e) => panic!("ipsee: unable to create channel: {}", e),
+            };
+            loop {
+                match rx.next() {
+                    Ok(packet) => child_snd.send(packet.to_owned()).unwrap(),
+                    Err(e) => panic!("ipsee: Unable to receive packet: {}", e)
+                };
+            }
+        });
+        children.push(child);
+    }
 
     loop {
-        match rx.next() {
+        match rcv.recv() {
             Ok(packet) => {
-                let ethernet_packet = EthernetPacket::new(packet).unwrap();
+                let ethernet_packet = EthernetPacket::new(packet.as_slice()).unwrap();
                 match ethernet_packet.get_ethertype() {
                     EtherTypes::Ipv4 => process_ipv4(&interface_name[..], &ethernet_packet),
                     EtherTypes::Ipv6 => process_ipv6(&interface_name[..], &ethernet_packet),
                     EtherTypes::Arp => process_arp(&interface_name[..], &ethernet_packet),
                     _ => eprintln!("[{}] ? Unknown packet type", interface_name),
                 }
-
             },
-            Err(e) => panic!("ipsee: Unable to receive packet: {}", e)
+            Err(_) => panic!("All interfaces closed")
         }
     }
 }

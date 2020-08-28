@@ -5,5 +5,5 @@ version = "0.1.0"
 authors = ["Eric Mrak <enmrak@gmail.com>"]
 
 [dependencies]
-pnet = "0.21.0"
+pnet = "0.26.0"
 clap = "2.33.3"
