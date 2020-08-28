@@ -1,4 +1,5 @@
 extern crate pnet;
+extern crate clap;
 
 use std::env;
 use std::process::exit;
@@ -18,8 +19,11 @@ use pnet::packet::tcp::TcpPacket;
 use pnet::packet::udp::UdpPacket;
 use pnet::util::MacAddr;
 
+use clap::{App,Arg,ArgMatches};
+
 fn main() {
-    let interface_name = env::args().nth(1).unwrap();
+    let args = parse_args();
+    let interface_name = args.value_of("interface").unwrap();
     let interface_name_matcher =
         |interface: &NetworkInterface| interface.name == interface_name;
 
@@ -53,6 +57,21 @@ fn main() {
             Err(e) => panic!("ipsee: Unable to receive packet: {}", e)
         }
     }
+}
+
+fn parse_args<'a>() -> ArgMatches<'a> {
+    App::new(clap::crate_name!())
+        .version(clap::crate_version!())
+        .author(clap::crate_authors!())
+        .about(clap::crate_description!())
+        .arg(Arg::with_name("interface")
+            .help("The interface to listen on")
+            .long("interface")
+            .short("i")
+            .takes_value(true)
+            .required(true)
+        )
+        .get_matches()
 }
 
 fn process_ipv4(interface_name: &str, packet: &EthernetPacket) {
@@ -119,7 +138,7 @@ fn process_tcp(interface_name: &str,
                destination: IpAddr,
                packet: &[u8]) {
     match TcpPacket::new(packet) {
-        Some(tcp_packet) => println!("[{}] T {}:{} > {}:{} ~ {}",
+        Some(tcp_packet) => println!("[{}] T {}:{} > {}:{} ~ {}b",
                                      interface_name,
                                      source,
                                      tcp_packet.get_source(),

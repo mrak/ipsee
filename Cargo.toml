@@ -1,7 +1,9 @@
 [package]
 name = "ipsee"
+description = "Dump network packet data"
 version = "0.1.0"
-authors = ["Eric Mrak <mail@ericmrak.info>"]
+authors = ["Eric Mrak <enmrak@gmail.com>"]
 
 [dependencies]
 pnet = "0.21.0"
+clap = "2.33.3"
