@@ -2,7 +2,9 @@ extern crate clap;
 extern crate pnet;
 
 use std::env;
+use std::io::ErrorKind;
 use std::net::IpAddr;
+use std::process::exit;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
@@ -17,6 +19,7 @@ use pnet::packet::icmp::{IcmpPacket, IcmpTypes};
 use pnet::packet::ip::{IpNextHeaderProtocol, IpNextHeaderProtocols};
 use pnet::packet::ipv4::Ipv4Packet;
 use pnet::packet::ipv6::Ipv6Packet;
+use pnet::packet::tcp::TcpFlags;
 use pnet::packet::tcp::TcpPacket;
 use pnet::packet::udp::UdpPacket;
 use pnet::packet::Packet;
@@ -51,7 +54,16 @@ fn capture_packets(args: &ArgMatches, sender: Sender<(u32, Vec<u8>)>) {
             let (_, mut rx) = match datalink::channel(&interface, Default::default()) {
                 Ok(Ethernet(tx, rx)) => (tx, rx),
                 Ok(_) => panic!("ipsee: unhandled channel type"),
-                Err(e) => panic!("ipsee: unable to create channel: {}", e),
+                Err(e) => match e.kind() {
+                    ErrorKind::PermissionDenied => {
+                        eprintln!(
+                            "ipsee: Permission Denied - Unable to open interface {}",
+                            interface.name
+                        );
+                        exit(1)
+                    }
+                    _ => panic!("ipsee: unable to create channel: {}", e),
+                },
             };
             loop {
                 match rx.next() {
@@ -168,15 +180,31 @@ fn process_transport(
     }
 }
 
+fn tcp_type_from_flags(flags: u16) -> String {
+    if (flags & TcpFlags::RST) != 0 {
+        String::from("RST")
+    } else if (flags & TcpFlags::FIN) != 0 {
+        String::from("FIN")
+    } else if (flags & TcpFlags::SYN) != 0 {
+        String::from("SYN")
+    } else if (flags & TcpFlags::ACK) != 0 {
+        String::from("ACK")
+    } else {
+        String::from("???")
+    }
+}
+
 fn process_tcp(interface_name: &str, source: IpAddr, destination: IpAddr, packet: &[u8]) {
     match TcpPacket::new(packet) {
         Some(tcp_packet) => println!(
-            "[{}] T {}:{} > {}:{} ~ {}b",
+            "[{}] T {}:{} > {}:{} ~ {} #{} {}b",
             interface_name,
             source,
             tcp_packet.get_source(),
             destination,
             tcp_packet.get_destination(),
+            tcp_type_from_flags(tcp_packet.get_flags()),
+            tcp_packet.get_sequence(),
             packet.len(),
         ),
         None => println!("[{}] T Malformed packet", interface_name),
