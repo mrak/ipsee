@@ -24,7 +24,7 @@ use pnet::packet::tcp::TcpPacket;
 use pnet::packet::udp::UdpPacket;
 use pnet::packet::Packet;
 
-use clap::{App, Arg, ArgMatches};
+use clap::{App, Arg, ArgGroup, ArgMatches};
 
 fn main() {
     let args = parse_args();
@@ -78,7 +78,7 @@ fn capture_packets(args: &ArgMatches, sender: Sender<(u32, Vec<u8>)>) {
     }
 }
 
-fn print_packets(_args: &ArgMatches, receiver: Receiver<(u32, Vec<u8>)>) {
+fn print_packets(args: &ArgMatches, receiver: Receiver<(u32, Vec<u8>)>) {
     let interfaces = datalink::interfaces();
     loop {
         match receiver.recv() {
@@ -87,9 +87,15 @@ fn print_packets(_args: &ArgMatches, receiver: Receiver<(u32, Vec<u8>)>) {
                 let index = (interface_index as usize) - 1;
                 let ethernet_packet = EthernetPacket::new(packet.as_slice()).unwrap();
                 match ethernet_packet.get_ethertype() {
-                    EtherTypes::Ipv4 => process_ipv4(&interfaces[index].name[..], &ethernet_packet),
-                    EtherTypes::Ipv6 => process_ipv6(&interfaces[index].name[..], &ethernet_packet),
-                    EtherTypes::Arp => process_arp(&interfaces[index].name[..], &ethernet_packet),
+                    EtherTypes::Ipv4 => {
+                        process_ipv4(args, &interfaces[index].name[..], &ethernet_packet)
+                    }
+                    EtherTypes::Ipv6 => {
+                        process_ipv6(args, &interfaces[index].name[..], &ethernet_packet)
+                    }
+                    EtherTypes::Arp => {
+                        process_arp(args, &interfaces[index].name[..], &ethernet_packet)
+                    }
                     _ => eprintln!("[{}] ? Unknown packet type", interfaces[index].name),
                 }
             }
@@ -110,13 +116,67 @@ fn parse_args<'a>() -> ArgMatches<'a> {
                 .short("i")
                 .takes_value(true),
         )
+        .arg(
+            Arg::with_name("destination")
+                .help("Filter packets matching this destination")
+                .long("destination")
+                .short("D")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("source")
+                .help("Filter packets matching this source")
+                .long("source")
+                .short("S")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("icmp")
+                .help("Only show ICMP packets")
+                .long("icmp"),
+        )
+        .arg(
+            Arg::with_name("arp")
+                .help("Only show ARP packets")
+                .long("arp")
+                .short("a"),
+        )
+        .arg(
+            Arg::with_name("udp")
+                .help("Only show UDP packets")
+                .long("udp")
+                .short("u"),
+        )
+        .arg(
+            Arg::with_name("tcp")
+                .help("Only show TCP packets")
+                .long("tcp")
+                .short("t"),
+        )
+        .arg(
+            Arg::with_name("port")
+                .help("Filter packets matching this port")
+                .long("port")
+                .short("P")
+                .takes_value(true)
+                .validator(|x| match x.parse::<u16>() {
+                    Ok(_) => Ok(()),
+                    Err(_) => Err(format!("-P {} is not a valid port number", x)),
+                }),
+        )
+        .group(
+            ArgGroup::with_name("packet_types")
+                .args(&["tcp", "udp", "arp", "icmp"])
+                .multiple(true),
+        )
         .get_matches()
 }
 
-fn process_ipv4(interface_name: &str, packet: &EthernetPacket) {
+fn process_ipv4(args: &ArgMatches, interface_name: &str, packet: &EthernetPacket) {
     match Ipv4Packet::new(packet.payload()) {
         Some(ipv4_packet) => {
             process_transport(
+                args,
                 interface_name,
                 IpAddr::V4(ipv4_packet.get_source()),
                 IpAddr::V4(ipv4_packet.get_destination()),
@@ -128,10 +188,11 @@ fn process_ipv4(interface_name: &str, packet: &EthernetPacket) {
     }
 }
 
-fn process_ipv6(interface_name: &str, packet: &EthernetPacket) {
+fn process_ipv6(args: &ArgMatches, interface_name: &str, packet: &EthernetPacket) {
     match Ipv6Packet::new(packet.payload()) {
         Some(ipv6_packet) => {
             process_transport(
+                args,
                 interface_name,
                 IpAddr::V6(ipv6_packet.get_source()),
                 IpAddr::V6(ipv6_packet.get_destination()),
@@ -143,7 +204,10 @@ fn process_ipv6(interface_name: &str, packet: &EthernetPacket) {
     }
 }
 
-fn process_arp(interface_name: &str, packet: &EthernetPacket) {
+fn process_arp(args: &ArgMatches, interface_name: &str, packet: &EthernetPacket) {
+    if !args.is_present("arp") && args.is_present("packet_types") {
+        return;
+    }
     match ArpPacket::new(packet.payload()) {
         Some(arp_packet) => println!(
             "[{}] A {}[{}] > {}[{}] ~ {}",
@@ -163,6 +227,7 @@ fn process_arp(interface_name: &str, packet: &EthernetPacket) {
 }
 
 fn process_transport(
+    args: &ArgMatches,
     interface_name: &str,
     source: IpAddr,
     destination: IpAddr,
@@ -170,11 +235,17 @@ fn process_transport(
     packet: &[u8],
 ) {
     match protocol {
-        IpNextHeaderProtocols::Tcp => process_tcp(interface_name, source, destination, packet),
-        IpNextHeaderProtocols::Udp => process_udp(interface_name, source, destination, packet),
-        IpNextHeaderProtocols::Icmp => process_icmp(interface_name, source, destination, packet),
+        IpNextHeaderProtocols::Tcp => {
+            process_tcp(args, interface_name, source, destination, packet)
+        }
+        IpNextHeaderProtocols::Udp => {
+            process_udp(args, interface_name, source, destination, packet)
+        }
+        IpNextHeaderProtocols::Icmp => {
+            process_icmp(args, interface_name, source, destination, packet)
+        }
         IpNextHeaderProtocols::Icmpv6 => {
-            process_icmpv6(interface_name, source, destination, packet)
+            process_icmpv6(args, interface_name, source, destination, packet)
         }
         _ => println!("[{}] Unknown packet", interface_name),
     }
@@ -198,21 +269,36 @@ fn escape_payload(payload: &[u8]) -> String {
     String::from_utf8(
         payload
             .iter()
-            .map(|&b| {
-                if b == b'\t' || b == b'\r' || b == b'\n' || (b >= b' ' && b <= b'~') {
-                    b
-                } else {
-                    b'.'
-                }
+            .map(|&b| match b {
+                b' '..=b'~' | b'\t' | b'\r' | b'\n' => b,
+                _ => b'.',
             })
             .collect(),
     )
     .unwrap()
 }
 
-fn process_tcp(interface_name: &str, source: IpAddr, destination: IpAddr, packet: &[u8]) {
+fn process_tcp(
+    args: &ArgMatches,
+    interface_name: &str,
+    source: IpAddr,
+    destination: IpAddr,
+    packet: &[u8],
+) {
+    if !args.is_present("tcp") && args.is_present("packet_types") {
+        return;
+    }
     match TcpPacket::new(packet) {
         Some(tcp_packet) => {
+            match args.value_of("port") {
+                None => {}
+                Some(p) => {
+                    let port = p.parse::<u16>().unwrap();
+                    if port != tcp_packet.get_source() && port != tcp_packet.get_destination() {
+                        return;
+                    }
+                }
+            }
             println!(
                 "[{}] T {}:{} > {}:{} ~ {} #{} {}b",
                 interface_name,
@@ -230,22 +316,51 @@ fn process_tcp(interface_name: &str, source: IpAddr, destination: IpAddr, packet
     }
 }
 
-fn process_udp(interface_name: &str, source: IpAddr, destination: IpAddr, packet: &[u8]) {
+fn process_udp(
+    args: &ArgMatches,
+    interface_name: &str,
+    source: IpAddr,
+    destination: IpAddr,
+    packet: &[u8],
+) {
+    if !args.is_present("udp") && args.is_present("packet_types") {
+        return;
+    }
     match UdpPacket::new(packet) {
-        Some(udp_packet) => println!(
-            "[{}] U {}:{} > {}:{} ~ {}b",
-            interface_name,
-            source,
-            udp_packet.get_source(),
-            destination,
-            udp_packet.get_destination(),
-            udp_packet.get_length(),
-        ),
+        Some(udp_packet) => {
+            match args.value_of("port") {
+                None => {}
+                Some(p) => {
+                    let port = p.parse::<u16>().unwrap();
+                    if port != udp_packet.get_source() && port != udp_packet.get_destination() {
+                        return;
+                    }
+                }
+            }
+            println!(
+                "[{}] U {}:{} > {}:{} ~ {}b",
+                interface_name,
+                source,
+                udp_packet.get_source(),
+                destination,
+                udp_packet.get_destination(),
+                udp_packet.get_length(),
+            )
+        }
         None => println!("[{}] U Malformed packet", interface_name),
     }
 }
 
-fn process_icmp(interface_name: &str, source: IpAddr, destination: IpAddr, packet: &[u8]) {
+fn process_icmp(
+    args: &ArgMatches,
+    interface_name: &str,
+    source: IpAddr,
+    destination: IpAddr,
+    packet: &[u8],
+) {
+    if !args.is_present("icmp") && args.is_present("packet_types") {
+        return;
+    }
     match IcmpPacket::new(packet) {
         Some(icmp_packet) => match icmp_packet.get_icmp_type() {
             IcmpTypes::EchoReply => {}
@@ -255,7 +370,16 @@ fn process_icmp(interface_name: &str, source: IpAddr, destination: IpAddr, packe
     }
 }
 
-fn process_icmpv6(interface_name: &str, source: IpAddr, destination: IpAddr, packet: &[u8]) {
+fn process_icmpv6(
+    args: &ArgMatches,
+    interface_name: &str,
+    source: IpAddr,
+    destination: IpAddr,
+    packet: &[u8],
+) {
+    if !args.is_present("icmp") && args.is_present("packet_types") {
+        return;
+    }
     match IcmpPacket::new(packet) {
         Some(icmp_packet) => match icmp_packet.get_icmp_type() {
             IcmpTypes::EchoReply => {}
