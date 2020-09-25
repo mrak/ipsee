@@ -194,19 +194,38 @@ fn tcp_type_from_flags(flags: u16) -> String {
     }
 }
 
+fn escape_payload(payload: &[u8]) -> String {
+    String::from_utf8(
+        payload
+            .iter()
+            .map(|&b| {
+                if b == b'\t' || b == b'\r' || b == b'\n' || (b >= b' ' && b <= b'~') {
+                    b
+                } else {
+                    b'.'
+                }
+            })
+            .collect(),
+    )
+    .unwrap()
+}
+
 fn process_tcp(interface_name: &str, source: IpAddr, destination: IpAddr, packet: &[u8]) {
     match TcpPacket::new(packet) {
-        Some(tcp_packet) => println!(
-            "[{}] T {}:{} > {}:{} ~ {} #{} {}b",
-            interface_name,
-            source,
-            tcp_packet.get_source(),
-            destination,
-            tcp_packet.get_destination(),
-            tcp_type_from_flags(tcp_packet.get_flags()),
-            tcp_packet.get_sequence(),
-            packet.len(),
-        ),
+        Some(tcp_packet) => {
+            println!(
+                "[{}] T {}:{} > {}:{} ~ {} #{} {}b",
+                interface_name,
+                source,
+                tcp_packet.get_source(),
+                destination,
+                tcp_packet.get_destination(),
+                tcp_type_from_flags(tcp_packet.get_flags()),
+                tcp_packet.get_sequence(),
+                tcp_packet.payload().len(),
+            );
+            println!("{}", escape_payload(tcp_packet.payload()))
+        }
         None => println!("[{}] T Malformed packet", interface_name),
     }
 }
