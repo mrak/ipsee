@@ -1,18 +1,17 @@
-extern crate pnet;
 extern crate clap;
+extern crate pnet;
 
 use std::env;
 use std::net::IpAddr;
-use std::sync::mpsc::{Sender,Receiver};
 use std::sync::mpsc;
+use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
 use std::vec::Vec;
 
-use pnet::datalink::{self, NetworkInterface};
 use pnet::datalink::Channel::Ethernet;
-use pnet::packet::Packet;
-use pnet::packet::arp::ArpPacket;
+use pnet::datalink::{self, NetworkInterface};
 use pnet::packet::arp::ArpOperations;
+use pnet::packet::arp::ArpPacket;
 use pnet::packet::ethernet::{EtherTypes, EthernetPacket};
 use pnet::packet::icmp::{IcmpPacket, IcmpTypes};
 use pnet::packet::ip::{IpNextHeaderProtocol, IpNextHeaderProtocols};
@@ -20,12 +19,13 @@ use pnet::packet::ipv4::Ipv4Packet;
 use pnet::packet::ipv6::Ipv6Packet;
 use pnet::packet::tcp::TcpPacket;
 use pnet::packet::udp::UdpPacket;
+use pnet::packet::Packet;
 
-use clap::{App,Arg,ArgMatches};
+use clap::{App, Arg, ArgMatches};
 
 fn main() {
     let args = parse_args();
-    let (snd,rcv): (Sender<(u32, Vec<u8>)>, Receiver<(u32, Vec<u8>)>) = mpsc::channel();
+    let (snd, rcv): (Sender<(u32, Vec<u8>)>, Receiver<(u32, Vec<u8>)>) = mpsc::channel();
 
     capture_packets(&args, snd);
     print_packets(&args, rcv);
@@ -50,13 +50,15 @@ fn capture_packets(args: &ArgMatches, sender: Sender<(u32, Vec<u8>)>) {
         let child = thread::spawn(move || {
             let (_, mut rx) = match datalink::channel(&interface, Default::default()) {
                 Ok(Ethernet(tx, rx)) => (tx, rx),
-                Ok(_) => panic!("ipsee: unhandled channel type: {}"),
+                Ok(_) => panic!("ipsee: unhandled channel type"),
                 Err(e) => panic!("ipsee: unable to create channel: {}", e),
             };
             loop {
                 match rx.next() {
-                    Ok(packet) => child_snd.send((interface.index, packet.to_owned())).unwrap(),
-                    Err(e) => panic!("ipsee: Unable to receive packet: {}", e)
+                    Ok(packet) => child_snd
+                        .send((interface.index, packet.to_owned()))
+                        .unwrap(),
+                    Err(e) => panic!("ipsee: Unable to receive packet: {}", e),
                 };
             }
         });
@@ -78,8 +80,8 @@ fn print_packets(_args: &ArgMatches, receiver: Receiver<(u32, Vec<u8>)>) {
                     EtherTypes::Arp => process_arp(&interfaces[index].name[..], &ethernet_packet),
                     _ => eprintln!("[{}] ? Unknown packet type", interfaces[index].name),
                 }
-            },
-            Err(_) => panic!("All interfaces closed")
+            }
+            Err(_) => panic!("All interfaces closed"),
         }
     }
 }
@@ -89,11 +91,12 @@ fn parse_args<'a>() -> ArgMatches<'a> {
         .version(clap::crate_version!())
         .author(clap::crate_authors!())
         .about(clap::crate_description!())
-        .arg(Arg::with_name("interface")
-            .help("The interface to listen on")
-            .long("interface")
-            .short("i")
-            .takes_value(true)
+        .arg(
+            Arg::with_name("interface")
+                .help("The interface to listen on")
+                .long("interface")
+                .short("i")
+                .takes_value(true),
         )
         .get_matches()
 }
@@ -101,134 +104,116 @@ fn parse_args<'a>() -> ArgMatches<'a> {
 fn process_ipv4(interface_name: &str, packet: &EthernetPacket) {
     match Ipv4Packet::new(packet.payload()) {
         Some(ipv4_packet) => {
-            process_transport(interface_name,
-                               IpAddr::V4(ipv4_packet.get_source()),
-                               IpAddr::V4(ipv4_packet.get_destination()),
-                               ipv4_packet.get_next_level_protocol(),
-                               ipv4_packet.payload());
-        },
-        None => println!("[{}] Malformed IPv4 packet", interface_name)
+            process_transport(
+                interface_name,
+                IpAddr::V4(ipv4_packet.get_source()),
+                IpAddr::V4(ipv4_packet.get_destination()),
+                ipv4_packet.get_next_level_protocol(),
+                ipv4_packet.payload(),
+            );
+        }
+        None => println!("[{}] Malformed IPv4 packet", interface_name),
     }
-
 }
 
 fn process_ipv6(interface_name: &str, packet: &EthernetPacket) {
     match Ipv6Packet::new(packet.payload()) {
         Some(ipv6_packet) => {
-            process_transport(interface_name,
-                               IpAddr::V6(ipv6_packet.get_source()),
-                               IpAddr::V6(ipv6_packet.get_destination()),
-                               ipv6_packet.get_next_header(),
-                               ipv6_packet.payload());
-        },
-        None => println!("[{}] Malformed IPv6 packet", interface_name)
+            process_transport(
+                interface_name,
+                IpAddr::V6(ipv6_packet.get_source()),
+                IpAddr::V6(ipv6_packet.get_destination()),
+                ipv6_packet.get_next_header(),
+                ipv6_packet.payload(),
+            );
+        }
+        None => println!("[{}] Malformed IPv6 packet", interface_name),
     }
-
 }
 
 fn process_arp(interface_name: &str, packet: &EthernetPacket) {
     match ArpPacket::new(packet.payload()) {
-        Some(arp_packet) => {
-            println!("[{}] A {}[{}] > {}[{}] ~ {}",
-                     interface_name,
-                     packet.get_source(),
-                     arp_packet.get_sender_proto_addr(),
-                     packet.get_destination(),
-                     arp_packet.get_target_proto_addr(),
-                     match arp_packet.get_operation() {
-                         ArpOperations::Reply => "reply",
-                         ArpOperations::Request => "request",
-                         _ => "unknown",
-                     },
-                     )
-        },
-        None => println!("[{}] A Malformed packet", interface_name)
+        Some(arp_packet) => println!(
+            "[{}] A {}[{}] > {}[{}] ~ {}",
+            interface_name,
+            packet.get_source(),
+            arp_packet.get_sender_proto_addr(),
+            packet.get_destination(),
+            arp_packet.get_target_proto_addr(),
+            match arp_packet.get_operation() {
+                ArpOperations::Reply => "reply",
+                ArpOperations::Request => "request",
+                _ => "unknown",
+            },
+        ),
+        None => println!("[{}] A Malformed packet", interface_name),
     }
-
 }
 
-fn process_transport(interface_name: &str,
-                     source: IpAddr,
-                     destination: IpAddr,
-                     protocol: IpNextHeaderProtocol,
-                     packet: &[u8]) {
+fn process_transport(
+    interface_name: &str,
+    source: IpAddr,
+    destination: IpAddr,
+    protocol: IpNextHeaderProtocol,
+    packet: &[u8],
+) {
     match protocol {
         IpNextHeaderProtocols::Tcp => process_tcp(interface_name, source, destination, packet),
         IpNextHeaderProtocols::Udp => process_udp(interface_name, source, destination, packet),
         IpNextHeaderProtocols::Icmp => process_icmp(interface_name, source, destination, packet),
-        IpNextHeaderProtocols::Icmpv6 => process_icmpv6(interface_name, source, destination, packet),
+        IpNextHeaderProtocols::Icmpv6 => {
+            process_icmpv6(interface_name, source, destination, packet)
+        }
         _ => println!("[{}] Unknown packet", interface_name),
     }
 }
 
-fn process_tcp(interface_name: &str,
-               source: IpAddr,
-               destination: IpAddr,
-               packet: &[u8]) {
+fn process_tcp(interface_name: &str, source: IpAddr, destination: IpAddr, packet: &[u8]) {
     match TcpPacket::new(packet) {
-        Some(tcp_packet) => println!("[{}] T {}:{} > {}:{} ~ {}b",
-                                     interface_name,
-                                     source,
-                                     tcp_packet.get_source(),
-                                     destination,
-                                     tcp_packet.get_destination(),
-                                     packet.len(),
-                                     ),
+        Some(tcp_packet) => println!(
+            "[{}] T {}:{} > {}:{} ~ {}b",
+            interface_name,
+            source,
+            tcp_packet.get_source(),
+            destination,
+            tcp_packet.get_destination(),
+            packet.len(),
+        ),
         None => println!("[{}] T Malformed packet", interface_name),
     }
 }
 
-fn process_udp(interface_name: &str,
-               source: IpAddr,
-               destination: IpAddr,
-               packet: &[u8]) {
+fn process_udp(interface_name: &str, source: IpAddr, destination: IpAddr, packet: &[u8]) {
     match UdpPacket::new(packet) {
-        Some(udp_packet) => println!("[{}] U {}:{} > {}:{} ~ {}b",
-                                     interface_name,
-                                     source,
-                                     udp_packet.get_source(),
-                                     destination,
-                                     udp_packet.get_destination(),
-                                     udp_packet.get_length(),
-                                     ),
+        Some(udp_packet) => println!(
+            "[{}] U {}:{} > {}:{} ~ {}b",
+            interface_name,
+            source,
+            udp_packet.get_source(),
+            destination,
+            udp_packet.get_destination(),
+            udp_packet.get_length(),
+        ),
         None => println!("[{}] U Malformed packet", interface_name),
     }
 }
 
-fn process_icmp(interface_name: &str,
-                source: IpAddr,
-                destination: IpAddr,
-                packet: &[u8]) {
+fn process_icmp(interface_name: &str, source: IpAddr, destination: IpAddr, packet: &[u8]) {
     match IcmpPacket::new(packet) {
-        Some(icmp_packet) => {
-            match icmp_packet.get_icmp_type() {
-                IcmpTypes::EchoReply => {}
-                _ => println!("[{}] I {} > {}",
-                              interface_name,
-                              source,
-                              destination,
-                              )
-            }
-        }
+        Some(icmp_packet) => match icmp_packet.get_icmp_type() {
+            IcmpTypes::EchoReply => {}
+            _ => println!("[{}] I {} > {}", interface_name, source, destination,),
+        },
         None => println!("[{}] I Malformed packet", interface_name),
     }
 }
 
-fn process_icmpv6(interface_name: &str,
-                  source: IpAddr,
-                  destination: IpAddr,
-                  packet: &[u8]) {
+fn process_icmpv6(interface_name: &str, source: IpAddr, destination: IpAddr, packet: &[u8]) {
     match IcmpPacket::new(packet) {
-        Some(icmp_packet) => {
-            match icmp_packet.get_icmp_type() {
-                IcmpTypes::EchoReply => {}
-                _ => println!("[{}] I {} > {}",
-                              interface_name,
-                              source,
-                              destination,
-                              )
-            }
-        }
+        Some(icmp_packet) => match icmp_packet.get_icmp_type() {
+            IcmpTypes::EchoReply => {}
+            _ => println!("[{}] I {} > {}", interface_name, source, destination,),
+        },
         None => println!("[{}] I Malformed packet", interface_name),
     }
 }
