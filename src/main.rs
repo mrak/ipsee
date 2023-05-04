@@ -331,7 +331,8 @@ fn process_udp(
                 destination,
                 udp_packet.get_destination(),
                 udp_packet.get_length(),
-            )
+            );
+            println!("{}", escape_payload(udp_packet.payload()))
         }
         None => println!("[{}] U Malformed packet", interface_name),
     }
